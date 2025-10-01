@@ -53,29 +53,26 @@ def open_conn(host, port):
 
     hostport = f"{host}:{port}"
 
-    #if hostport in blacklist:
-    #    return
+    if hostport in blacklist:
+        return
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            print("Valid connection")
             s.connect((host, port))
-            print("Made connection")
         except ConnectionRefusedError as e:
             print(f"Could not connect to {hostport}. Error: {e}")
-            #print(f"Adding {hostport} to blacklist")
+            print(f"Adding {hostport} to blacklist")
 
-            #conn_lock.acquire()
+            conn_lock.acquire()
 
-            #blacklist.append(f"{hostport}")
-            #if hostport in connections:
-            #    del connections[hostport]
+            blacklist.append(f"{hostport}")
+            if hostport in connections:
+                del connections[hostport]
 
-            #conn_lock.release()
+            conn_lock.release()
 
             return
         res = s.recv(msg_limit)
-        print(res)
         parse_response(res)
 
 
@@ -87,7 +84,7 @@ def parse_response(res):
     if res == '':
         return
 
-    lines = res.split("\n")
+    lines = res.strip().split("\n")
 
     conn_lock.acquire()
     i = 0
@@ -141,7 +138,6 @@ def parse_input(usr_input):
 
         inp = usr_input[1:]
         host, port = split_id(inp)
-        print(host, port)
         open_conn(host, port)
 
 
