@@ -5,9 +5,12 @@ import argparse
 import time
 import random
 
+from collections import defaultdict
+
 
 blacklist = []
 connections = {}
+ip_counts = defaultdict(list)
 local_digit = -1 
 myhost = "128.84.213.13"
 myport = "5678"
@@ -15,6 +18,7 @@ myid = f"{myhost}:{myport}"
 msg_limit = 9000
 maxlines = 256
 conn_lock = threading.Lock()
+evil_active = False
 
 
 def pick_random_connection():
@@ -48,12 +52,17 @@ def state_str():
     return s[:-1] # Exclude the last newline
 
 
+def evil_mode(host, port):
+    global evil_active
+    evil_active = True
+
 
 def open_conn(host, port):
 
     hostport = f"{host}:{port}"
 
     if hostport in blacklist:
+        print(f"Blacklisted node: {hostport}")
         return
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -61,16 +70,7 @@ def open_conn(host, port):
             s.connect((host, port))
         except ConnectionRefusedError as e:
             print(f"Could not connect to {hostport}. Error: {e}")
-            print(f"Adding {hostport} to blacklist")
-
-            conn_lock.acquire()
-
-            blacklist.append(f"{hostport}")
-            if hostport in connections:
-                del connections[hostport]
-
-            conn_lock.release()
-
+            blacklist.append(hostport)
             return
         res = s.recv(msg_limit)
         parse_response(res)
@@ -88,30 +88,39 @@ def parse_response(res):
 
     conn_lock.acquire()
     i = 0
-    for line in lines:
+    try:
+        for line in lines:
 
-        if i > maxlines:
-            break
+            if i > maxlines:
+                break
 
-        i += 1
+            i += 1
 
-        s = line.split(",")
-        hostport, t, d = s
+            s = line.split(",")
+            hostport, t, d = s
 
 
-        # Only update if newer timestamp
-        dold = 11
-        if hostport in connections:
-            told = connections[hostport][0]
-            dold = connections[hostport][1]
-            if told >= int(t) or int(time.time()) < int(t):
-                continue
+            # Only update if newer timestamp
+            dold = 11
+            if hostport in connections:
+                told = connections[hostport][0]
+                dold = connections[hostport][1]
+                if told >= int(t) or int(time.time()) < int(t):
+                    continue
 
-        connections[hostport] = (int(t), int(d))
 
-        if int(dold) != int(d):
-            print(f"{hostport} --> {d}")
+            ip_counts[hostport].append(int(t))
+            connections[hostport] = (int(t), int(d))
 
+            if len(ip_counts[hostport]) > 3:
+                ip_counts[hostport].sorted()
+                ip_counts[hostport].pop(0)
+
+            if int(dold) != int(d):
+                print(f"{hostport} --> {d}")
+
+    except Exception as e:
+        print(f"Invalid response {res}")
     conn_lock.release()
 
 
@@ -124,6 +133,9 @@ def check_update_digit(usr_input):
 
 def check_question(usr_input):
     return re.match(r"\?$", usr_input)
+
+def check_minus(usr_input):
+    return re.match(r"\-$", usr_input)
 
 def split_id(_id):
     hostport = _id.split(":")
@@ -154,6 +166,9 @@ def parse_input(usr_input):
             local_digit = int(usr_input)
             print(f"{myid} --> {local_digit}")
 
+    elif check_minus(usr_input):
+        host, port = pick_random_connection()
+        evil_mode(host, port)
 
 
     elif check_question(usr_input):
@@ -177,7 +192,10 @@ def listen_loop():
             conn, addr = s.accept()
 
             # Received new connection, send them a message
-            payload = state_str()
+            if evil_active:
+                payload = f"0000.00.00.00:00,1,1\n"
+            else:
+                payload = state_str()
             with conn:
                 conn.sendall(payload.encode())
             
